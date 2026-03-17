@@ -4,7 +4,7 @@ Correlation and phase scrambling utilities for time series analysis.
 
 import numpy as np
 import xarray as xr
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, norm
 from statsmodels.distributions.empirical_distribution import ECDF
 from .fft_bootstrap import *
 from .timeseries import TimeSeries
@@ -14,7 +14,8 @@ from tqdm import trange
 
 
 def cross_correlation(ts1, ts2, maxlags=None, method='pearson',
-                     n_iter=5000, return_distributions=False, detrend=True):
+                     n_iter=5000, return_distributions=False, detrend=True,
+                     significance_level=0.05):
     """
     Compute cross-correlation and p-values between two time series.
 
@@ -38,6 +39,8 @@ def cross_correlation(ts1, ts2, maxlags=None, method='pearson',
         If True, return full bootstrap distributions (only used when method='ebisuzaki').
     detrend : bool, default True
         If True, detrend signals before scrambling (only used when method='ebisuzaki').
+    significance_level : float, default 0.05
+        Significance level for confidence intervals (only used for method='pearson').
 
     Returns
     -------
@@ -46,6 +49,8 @@ def cross_correlation(ts1, ts2, maxlags=None, method='pearson',
             - lag: lag values in time units
             - cross_correlation: correlation coefficients at each lag
             - cross_correlation_pvalue: p-values for each lag
+            - pearson_ci_lower: lower bound of Pearson confidence interval
+            - pearson_ci_upper: upper bound of Pearson confidence interval
             - cross_correlation_distribution: bootstrap distributions (if requested and method='ebisuzaki')
 
     Raises
@@ -81,11 +86,10 @@ def cross_correlation(ts1, ts2, maxlags=None, method='pearson',
 
     # Delegate to appropriate method
     if method == 'pearson':
-        return _cross_correlation_pearson(ts1_ts, ts2_ts, maxlags)
+        return _cross_correlation_pearson(ts1_ts, ts2_ts, maxlags, significance_level=significance_level)
     else:  # method == 'ebisuzaki'
         return _cross_correlation_ebisuzaki(ts1_ts, ts2_ts, maxlags, n_iter, return_distributions, detrend)
-
-def _cross_correlation_pearson(ts1: TimeSeries, ts2: TimeSeries, maxlags=None):
+def _cross_correlation_pearson(ts1: TimeSeries, ts2: TimeSeries, maxlags=None, significance_level=0.05):
     """Helper function for Pearson cross-correlation."""
     x = np.asarray(ts1.data)
     y = np.asarray(ts2.data)
@@ -97,6 +101,10 @@ def _cross_correlation_pearson(ts1: TimeSeries, ts2: TimeSeries, maxlags=None):
     lags = np.arange(-maxlags, maxlags+1) * dt
     ccf = np.zeros(len(lags))
     pvals = np.zeros(len(lags))
+    ci_low = np.zeros(len(lags))
+    ci_high = np.zeros(len(lags))
+    
+    z_crit = norm.ppf(1 - significance_level / 2)
 
     for i, k in enumerate(range(-maxlags, maxlags+1)):
         if k < 0:
@@ -110,10 +118,28 @@ def _cross_correlation_pearson(ts1: TimeSeries, ts2: TimeSeries, maxlags=None):
         if len(xi) < 2 or len(yi) < 2:
             ccf[i] = np.nan
             pvals[i] = np.nan
+            ci_low[i] = np.nan
+            ci_high[i] = np.nan
         else:
             ts_xi = TimeSeries(ts1.time[k:] if k >= 0 else ts1.time[:n+k], xi, ts1.dt)
             ts_yi = TimeSeries(ts2.time[-k:] if k < 0 else ts2.time[:n-k], yi, ts2.dt)
-            ccf[i], pvals[i] = _correlation_pearson(ts_xi, ts_yi)
+            r, pval = _correlation_pearson(ts_xi, ts_yi)
+            ccf[i] = r
+            pvals[i] = pval
+            
+            # Calculate confidence intervals
+            n_eff = len(xi)
+            if np.isnan(r) or n_eff < 4:
+                ci_low[i] = np.nan
+                ci_high[i] = np.nan
+            else:
+                r_clipped = np.clip(r, -1 + 1e-12, 1 - 1e-12)
+                z = np.arctanh(r_clipped)
+                se = 1 / np.sqrt(n_eff - 3)
+                z_low = z - z_crit * se
+                z_high = z + z_crit * se
+                ci_low[i] = np.tanh(z_low)
+                ci_high[i] = np.tanh(z_high)
 
     ccf_da = xr.DataArray(
         ccf,
@@ -135,14 +161,34 @@ def _cross_correlation_pearson(ts1: TimeSeries, ts2: TimeSeries, maxlags=None):
         name="lag",
         attrs={"description": "Lag values"}
     )
+    ci_low_da = xr.DataArray(
+        ci_low,
+        coords={"lag": lags},
+        dims=["lag"],
+        name="pearson_ci_lower",
+        attrs={"description": f"Lower bound of {100*(1-significance_level):.0f}% confidence interval"}
+    )
+    ci_high_da = xr.DataArray(
+        ci_high,
+        coords={"lag": lags},
+        dims=["lag"],
+        name="pearson_ci_upper",
+        attrs={"description": f"Upper bound of {100*(1-significance_level):.0f}% confidence interval"}
+    )
 
     return xr.Dataset(
         {
             "lag": lag_da,
             "cross_correlation": ccf_da,
-            "cross_correlation_pvalue": pvals_da
+            "cross_correlation_pvalue": pvals_da,
+            "pearson_ci_lower": ci_low_da,
+            "pearson_ci_upper": ci_high_da,
         },
-        attrs={"description": "Cross-correlation and p-values using Pearson method"}
+        attrs={
+            "description": "Cross-correlation and p-values using Pearson method",
+            "n_samples": n,
+            "dt": dt,
+        }
     )
 
 def _cross_correlation_ebisuzaki(ts1: TimeSeries, ts2: TimeSeries, maxlags=None,
@@ -219,7 +265,11 @@ def _cross_correlation_ebisuzaki(ts1: TimeSeries, ts2: TimeSeries, maxlags=None,
 
     return xr.Dataset(
         data_vars,
-        attrs={"description": "Cross-correlation and p-values using Ebisuzaki method"}
+        attrs={
+            "description": "Cross-correlation and p-values using Ebisuzaki method",
+            "n_samples": n,
+            "dt": dt,
+        }
     )
 
 def maximum_cross_correlation(ts1, ts2, maxlags=None, method='pearson'):
@@ -246,8 +296,7 @@ def maximum_cross_correlation(ts1, ts2, maxlags=None, method='pearson'):
     Notes
     -----
     This function computes cross-correlation for all lags and returns
-    the lag and value where correlation is maximized. For zero-lag
-    correlation only, use correlation() instead.
+    the lag and value where correlation is maximized.
     """
     # Convert inputs to TimeSeries if needed (cross_correlation handles this)
     ds = cross_correlation(ts1, ts2, maxlags, method=method)
@@ -256,112 +305,6 @@ def maximum_cross_correlation(ts1, ts2, maxlags=None, method='pearson'):
     ccf_max = ds["cross_correlation"].values[idx]
 
     return lag_max, ccf_max
-
-
-def align_at_maximum_correlation(ts1, ts2, maxlags=None):
-    """
-    Align two time series at the lag of maximal cross-correlation.
-
-    This function finds the lag at which the cross-correlation between
-    two time series is maximized and returns both series aligned at
-    that optimal lag, with overlapping time windows.
-
-    Parameters
-    ----------
-    ts1, ts2 : xarray.DataArray
-        Input time series to align. If TimeSeries objects are provided,
-        they will be converted to xarray DataArrays for processing.
-        Must have compatible time steps.
-    maxlags : int, optional
-        Maximum lag to consider when searching for optimal alignment.
-        If None, uses full range (N-1 where N is series length).
-
-    Returns
-    -------
-    ts1_aligned, ts2_aligned : tuple of xarray.DataArray
-        Time series aligned at the lag of maximum correlation, with
-        matching time windows. Both series will have the same length
-        and time coordinates after alignment.
-
-    Raises
-    ------
-    ValueError
-        If the time series have incompatible time steps or lengths.
-
-    Notes
-    -----
-    The alignment process:
-    1. Computes cross-correlation for all lags within maxlags
-    2. Identifies the lag with maximum correlation
-    3. Uses xarray.shift to align the series at optimal lag
-    4. Drops NaN values to get overlapping time windows
-
-    This is useful for analyzing relationships between time series
-    that may be offset in time due to physical delays or measurement
-    timing differences.
-
-    Examples
-    --------
-    >>> ts1_aligned, ts2_aligned = align_at_maximum_correlation(ts1, ts2, maxlags=50)
-    >>> # Now ts1_aligned and ts2_aligned have maximum correlation at zero lag
-    """
-    # Validate inputs (only accept xarray DataArrays)
-    ts1_xr, ts2_xr = validate_dataarray_inputs(ts1, ts2, "align_at_maximum_correlation")
-
-    # Calculate time step (dt) - validation already ensured it's constant
-    time1_float = ts1_xr.coords["time"].values.astype(float)
-    if len(time1_float) > 1:
-        # Validation already checked that all time steps are equal, so we can use the first one
-        dt = float(time1_float[1] - time1_float[0])
-    else:
-        dt = 1.0
-
-    # Find optimal lag
-    lag_max, _ = maximum_cross_correlation(ts1_xr, ts2_xr, maxlags)
-
-    # Calculate shift in time steps
-    k = int(np.round(lag_max / dt))
-
-    # Manual trimming approach (more reliable than xr.shift for this use case)
-    data1 = ts1_xr.values
-    data2 = ts2_xr.values
-    n = len(data1)
-
-    if k < 0:
-        # ts1 leads ts2 by |k| steps
-        data1_trimmed = data1[:n+k]  # Remove last |k| points from ts1
-        data2_trimmed = data2[-k:]   # Remove first |k| points from ts2
-        time_trimmed = time1_float[:n+k]   # Use ts1's time (shorter)
-    elif k > 0:
-        # ts2 leads ts1 by k steps
-        data1_trimmed = data1[k:]    # Remove first k points from ts1
-        data2_trimmed = data2[:n-k]  # Remove last k points from ts2
-        time_trimmed = time1_float[k:]     # Use ts1's time (shifted)
-    else:
-        # No shift needed
-        data1_trimmed = data1
-        data2_trimmed = data2
-        time_trimmed = time1_float
-
-    # Create aligned xarray DataArrays
-    ts1_aligned = xr.DataArray(
-        data1_trimmed,
-        coords={"time": time_trimmed},
-        dims=["time"],
-        name="timeseries",
-        attrs=ts1_xr.attrs
-    )
-
-    ts2_aligned = xr.DataArray(
-        data2_trimmed,
-        coords={"time": time_trimmed},
-        dims=["time"],
-        name="timeseries",
-        attrs=ts2_xr.attrs
-    )
-
-    return ts1_aligned, ts2_aligned
-
 
 def bootstrap_correlation(ts1: TimeSeries, ts2: TimeSeries, n_iter=1000, detrend=True):
     """
@@ -460,72 +403,3 @@ def _correlation_ebisuzaki(ts1: TimeSeries, ts2: TimeSeries, n_iter=1000, detren
     """
     correlation, p_value, _ = bootstrap_correlation(ts1, ts2, n_iter=n_iter, detrend=detrend)
     return correlation, p_value
-
-def correlation(ts1, ts2, method='pearson', n_iter=1000, detrend=True):
-    """
-    Compute correlation between two time series using specified method.
-
-    This is a unified frontend function that provides a clean interface for
-    both Pearson and Ebisuzaki correlation methods.
-
-    Parameters
-    ----------
-    ts1, ts2 : xarray.DataArray
-        Input time series to correlate. If xarray DataArrays are provided,
-        they will be converted to TimeSeries objects.
-    method : {'pearson', 'ebisuzaki'}, default 'pearson'
-        Statistical method to use:
-        - 'pearson': Fast parametric correlation assuming Gaussian distributions
-        - 'ebisuzaki': Phase scrambling method robust for autocorrelated data
-    n_iter : int, default 1000
-        Number of bootstrap iterations (only used for 'ebisuzaki' method).
-    detrend : bool, default True
-        If True, detrend signals before phase scrambling (only used for 'ebisuzaki' method).
-
-    Returns
-    -------
-    tuple
-        (correlation, p_value):
-            - correlation: correlation coefficient (float)
-            - p_value: statistical significance p-value (float)
-
-    Raises
-    ------
-    ValueError
-        If method is not 'pearson' or 'ebisuzaki', or if time series have
-        mismatched properties.
-
-    Notes
-    -----
-    This function provides zero-lag correlation. For lag-based cross-correlation
-    analysis, use cross_correlation() instead.
-
-    Method comparison:
-    - 'pearson': Fast but assumes Gaussian distributions. May give incorrect
-      p-values for autocorrelated time series.
-    - 'ebisuzaki': Slower but robust for autocorrelated data. Uses phase
-      scrambling to preserve power spectrum while destroying correlations.
-
-    References
-    ----------
-    Ebisuzaki, W. (1997). A method to estimate the statistical significance of a
-    correlation when the data are serially correlated. Journal of Climate, 10(9),
-    2147-2153.
-    """
-    # Validate method parameter
-    if method not in ['pearson', 'ebisuzaki']:
-        raise ValueError(f"Method must be 'pearson' or 'ebisuzaki', got '{method}'")
-
-    # Validate inputs (only accept xarray DataArrays)
-    ts1_xr, ts2_xr = validate_dataarray_inputs(ts1, ts2, "correlation")
-    # Convert to TimeSeries for backend computation
-    ts1_ts = TimeSeries.from_xarray(ts1_xr)
-    ts2_ts = TimeSeries.from_xarray(ts2_xr)
-
-    # Delegate to appropriate backend method
-    if method == 'pearson':
-        return _correlation_pearson(ts1_ts, ts2_ts)
-    else:  # method == 'ebisuzaki'
-        return _correlation_ebisuzaki(ts1_ts, ts2_ts, n_iter=n_iter, detrend=detrend)
-
-# Legacy function - use cross_correlation(method='ebisuzaki') instead

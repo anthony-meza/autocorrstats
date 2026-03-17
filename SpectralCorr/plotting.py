@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import Optional
 import xarray as xr
+from scipy.stats import norm
 
 
 def plot_significant_correlations(
@@ -47,30 +48,6 @@ def plot_significant_correlations(
     -------
     ax : matplotlib.axes.Axes
         The axes object with the plot.
-
-    Examples
-    --------
-    >>> import matplotlib.pyplot as plt
-    >>> import xarray as xr
-    >>> from SpectralCorr import cross_correlation
-    >>> from SpectralCorr.plotting import plot_significant_correlations
-    >>>
-    >>> # Create sample data
-    >>> ts1 = xr.DataArray(np.random.randn(100), dims=['time'])
-    >>> ts2 = xr.DataArray(np.random.randn(100), dims=['time'])
-    >>>
-    >>> # Compute cross-correlation
-    >>> result = cross_correlation(ts1, ts2, method='ebisuzaki')
-    >>>
-    >>> # Plot
-    >>> fig, ax = plt.subplots()
-    >>> plot_significant_correlations(
-    ...     ax,
-    ...     result['lag'].values,
-    ...     result['cross_correlation'].values,
-    ...     result['cross_correlation_pvalue'].values
-    ... )
-    >>> plt.show()
     """
     sig_mask = pvals < significance_level
     nonsig_mask = ~sig_mask
@@ -184,11 +161,57 @@ def plot_conf_intervals(
     return ax
 
 
+def plot_pearson_conf_intervals(
+    ax,
+    lags,
+    ci_lower,
+    ci_upper,
+    significance_level: float = 0.05,
+    color: Optional[str] = None,
+    label: Optional[str] = None
+):
+    """
+    Plot Pearson confidence intervals for a cross-correlation function.
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        Axes object to plot on.
+    lags : array-like
+        Lag values in time units.
+    ci_lower : array-like
+        Lower bound of the confidence interval.
+    ci_upper : array-like
+        Upper bound of the confidence interval.
+    significance_level : float, default 0.05
+        Significance level for labeling.
+    color : str, optional
+        Color for the confidence interval fill.
+    label : str, optional
+        Label for the confidence interval.
+    Returns
+    -------
+    ax : matplotlib.axes.Axes
+        The axes object with the plot.
+    """
+    if label is None:
+        limits = str(round(100 * (1 - significance_level)))
+        label = f"Pearson {limits}% Confidence Limits"
+
+    fill_kwargs = {'alpha': 0.45, 'label': label}
+    if color is not None:
+        fill_kwargs['color'] = color
+    
+    ax.fill_between(lags, ci_lower, ci_upper, **fill_kwargs)
+    ax.legend()
+    return ax
+
+
 def plot_cross_correlation(
     result: xr.Dataset,
     significance_level: float = 0.05,
     show_significance: bool = True,
     show_confidence: bool = False,
+    show_pearson_confidence: bool = False,
     figsize: tuple = (10, 6),
     ax = None,
     **kwargs
@@ -204,6 +227,7 @@ def plot_cross_correlation(
         - 'cross_correlation': correlation coefficients
         - 'cross_correlation_pvalue': p-values (if show_significance=True)
         - 'cross_correlation_distribution': bootstrap distributions (if show_confidence=True)
+        - 'pearson_ci_lower', 'pearson_ci_upper': Pearson CI (if show_pearson_confidence=True)
     significance_level : float, default 0.05
         Significance threshold.
     show_significance : bool, default True
@@ -211,6 +235,9 @@ def plot_cross_correlation(
     show_confidence : bool, default False
         If True, show confidence intervals from bootstrap distributions.
         Requires 'cross_correlation_distribution' in result.
+    show_pearson_confidence : bool, default False
+        If True, show confidence intervals from Pearson's formula.
+        Requires 'pearson_ci_lower' and 'pearson_ci_upper' in result.
     figsize : tuple, default (10, 6)
         Figure size (width, height) in inches. Ignored if ax is provided.
     ax : matplotlib.axes.Axes, optional
@@ -249,11 +276,11 @@ def plot_cross_correlation(
     lags = result['lag'].values
     ccf = result['cross_correlation'].values
 
-    # Plot confidence intervals first (if requested)
+    # Plot bootstrap confidence intervals
     if show_confidence:
         if 'cross_correlation_distribution' not in result:
             raise ValueError(
-                "Cannot show confidence intervals: 'cross_correlation_distribution' "
+                "Cannot show bootstrap confidence intervals: 'cross_correlation_distribution' "
                 "not found in result. Use return_distributions=True when calling "
                 "cross_correlation()."
             )
@@ -263,6 +290,23 @@ def plot_cross_correlation(
             result['cross_correlation_distribution'],
             significance_level=significance_level,
             **kwargs.get('conf_kwargs', {})
+        )
+
+    # Plot Pearson confidence intervals
+    if show_pearson_confidence:
+        if 'pearson_ci_lower' not in result or 'pearson_ci_upper' not in result:
+             raise ValueError(
+                "Cannot show Pearson confidence intervals: 'pearson_ci_lower' or 'pearson_ci_upper' "
+                "not found in result. Ensure method is 'pearson'."
+            )
+        
+        plot_pearson_conf_intervals(
+            ax,
+            lags,
+            result['pearson_ci_lower'].values,
+            result['pearson_ci_upper'].values,
+            significance_level=significance_level,
+            **kwargs.get('pearson_conf_kwargs', {})
         )
 
     # Plot correlations with significance coloring

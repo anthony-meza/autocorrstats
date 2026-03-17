@@ -4,9 +4,7 @@ Tests for cross-correlation functions.
 
 import numpy as np
 import pytest
-import warnings
-from SpectralCorr import AR1_process, cross_correlation, maximum_cross_correlation, cross_correlation_maxima, bootstrapped_cross_correlation
-from SpectralCorr.timeseries import TimeSeries
+from SpectralCorr import AR1_process, cross_correlation, maximum_cross_correlation
 
 
 class TestCrossCorrelation:
@@ -120,22 +118,6 @@ class TestCrossCorrelation:
         zero_lag_idx = self.maxlags  # Zero lag is in the middle
         assert abs(result.cross_correlation.values[zero_lag_idx] - 1.0) < 1e-10
 
-    def test_deprecated_function_warning(self):
-        """Test that deprecated function shows warning."""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-
-            result = bootstrapped_cross_correlation(self.ts1, self.ts2, maxlags=5, n_iter=10)
-
-            # Check that a deprecation warning was raised
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "deprecated" in str(w[0].message)
-            assert "cross_correlation(method='ebisuzaki')" in str(w[0].message)
-
-            # Check that result structure is correct
-            assert 'cross_correlation' in result
-
 
 class TestMaximumCrossCorrelation:
     """Test suite for maximum_cross_correlation function."""
@@ -197,25 +179,3 @@ class TestMaximumCrossCorrelation:
         assert isinstance(lag_max, (int, float, np.number))
         assert isinstance(ccf_max, (float, np.number))
         assert ccf_max > 0.5  # Should still find strong correlation
-
-
-class TestDeprecatedCrossCorrelationMaxima:
-    """Test suite for deprecated cross_correlation_maxima function."""
-
-    def test_deprecated_function_warning(self):
-        """Test that deprecated function gives warning but still works."""
-        ts1 = AR1_process(rho=0.8, sigma=1.0, y0=0.0, N=50, seed=42)
-        ts2 = AR1_process(rho=0.7, sigma=1.0, y0=0.0, N=50, seed=123)
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            lag_max, ccf_max = cross_correlation_maxima(ts1, ts2, maxlags=10)
-
-            # Check that warning was issued
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "cross_correlation_maxima() is deprecated" in str(w[0].message)
-
-        # Check that function still works
-        assert isinstance(lag_max, (int, float, np.number))
-        assert isinstance(ccf_max, (float, np.number))
