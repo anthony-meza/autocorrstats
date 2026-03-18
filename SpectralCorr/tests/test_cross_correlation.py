@@ -42,9 +42,9 @@ class TestCrossCorrelation:
 
     def test_ebisuzaki_method(self):
         """Test cross-correlation with Ebisuzaki method."""
-        n_iter = 50  # Small for speed
+        n_surrogates = 50  # Small for speed
         result = cross_correlation(self.ts1, self.ts2, maxlags=self.maxlags,
-                                 method='ebisuzaki', n_iter=n_iter)
+                                 method='ebisuzaki', n_surrogates=n_surrogates)
 
         # Check structure
         assert 'lag' in result
@@ -58,16 +58,16 @@ class TestCrossCorrelation:
 
     def test_ebisuzaki_with_distributions(self):
         """Test Ebisuzaki method with distribution return."""
-        n_iter = 30
+        n_surrogates = 30
         result = cross_correlation(self.ts1, self.ts2, maxlags=self.maxlags,
-                                 method='ebisuzaki', n_iter=n_iter, return_distributions=True)
+                                 method='ebisuzaki', n_surrogates=n_surrogates, return_distributions=True)
 
         # Check that distributions are returned
         assert 'cross_correlation_distribution' in result
 
         # Check distribution dimensions
         expected_lags = 2 * self.maxlags + 1
-        assert result.cross_correlation_distribution.shape == (n_iter, expected_lags)
+        assert result.cross_correlation_distribution.shape == (n_surrogates, expected_lags)
 
     def test_method_validation(self):
         """Test that invalid methods raise ValueError."""

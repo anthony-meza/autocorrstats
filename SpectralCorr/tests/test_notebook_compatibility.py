@@ -6,11 +6,17 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for testing
 import matplotlib.pyplot as plt
-from SpectralCorr import AR1_process, cross_correlation, maximum_cross_correlation
+import pandas as pd
+from SpectralCorr import (
+    AR1_process,
+    cross_correlation,
+    maximum_cross_correlation,
+    polynomial_coefficient_significance,
+)
 
 
-def test_ar1_example_notebook():
-    """Test the code from AR1_example.ipynb works with xarray interface."""
+def test_ar1_lagged_example_notebook():
+    """Test the core code path used in AR1_lagged_example.ipynb."""
     # Time series parameters
     N = 500
     dt = 1.0
@@ -48,21 +54,21 @@ def test_ebisuzaki_method():
     ts1 = AR1_process(0.9, 1.0, 1, N, seed=42, dt=dt)
     ts2 = AR1_process(0.9, 1.0, 1, N, seed=31, dt=dt)
 
-    # Run Ebisuzaki method with small n_iter for speed
-    n_iter = 100
+    # Run Ebisuzaki method with small n_surrogates for speed
+    n_surrogates = 100
     ccf_maxlag = 36
     result = cross_correlation(
         ts1, ts2,
         maxlags=ccf_maxlag,
         method='ebisuzaki',
-        n_iter=n_iter,
+        n_surrogates=n_surrogates,
         return_distributions=True,
-        detrend=True
+        detrend="constant"
     )
 
     # Verify bootstrap distributions are returned
     assert 'cross_correlation_distribution' in result
-    assert result.cross_correlation_distribution.shape == (n_iter, 2 * ccf_maxlag + 1)
+    assert result.cross_correlation_distribution.shape == (n_surrogates, 2 * ccf_maxlag + 1)
 
 
 def test_xarray_plotting_compatibility():
@@ -83,3 +89,52 @@ def test_xarray_plotting_compatibility():
     ccf_ds["cross_correlation"].plot(ax=axes[1])
 
     plt.close(fig)
+
+
+def test_polynomial_trend_example_notebook():
+    """Test the core code path used in a polynomial trend notebook."""
+    time = np.arange(120, dtype=float)
+    signal = 0.03 * time + np.sin(time / 12)
+
+    import xarray as xr
+
+    ts = xr.DataArray(signal, dims=["time"], coords={"time": time})
+    result = polynomial_coefficient_significance(
+        ts,
+        degree=1,
+        n_surrogates=16,
+        return_distributions=True,
+        alternative="greater",
+    )
+
+    assert "polynomial_coefficient" in result
+    assert "polynomial_coefficient_pvalue" in result
+    assert "polynomial_coefficient_distribution" in result
+    assert result["polynomial_coefficient_pvalue"].dims == ()
+
+
+def test_rapid_example_notebook():
+    """Test the core code path used in RAPID_example.ipynb."""
+    df = pd.read_csv("notebook_examples/amoc_rapid_RAPID.csv", comment="#")
+    decimal_time = df["Year"] + (df["Month"] - 1) / 12
+
+    import xarray as xr
+
+    ts = xr.DataArray(
+        df["RAPID (Sv)"].to_numpy(),
+        dims=["time"],
+        coords={"time": decimal_time.to_numpy()},
+        name="rapid_transport",
+    )
+    result = polynomial_coefficient_significance(
+        ts,
+        degree=1,
+        n_surrogates=16,
+        alternative="two-sided",
+        return_distributions=True,
+    )
+
+    assert "polynomial_coefficient" in result
+    assert "polynomial_coefficient_pvalue" in result
+    assert "polynomial_coefficient_distribution" in result
+    assert result["polynomial_coefficient_pvalue"].dims == ()

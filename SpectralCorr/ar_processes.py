@@ -1,14 +1,9 @@
-"""
-Autoregressive time series generation utilities.
-
-This module provides functions for generating synthetic time series data
-following autoregressive models, particularly AR(1) processes commonly
-used in climate and geophysical applications.
-"""
+"""Autoregressive time series generation utilities."""
 
 from typing import Optional
+
 import numpy as np
-from .timeseries import TimeSeries
+import xarray as xr
 
 def AR1_process(
     rho: float,
@@ -17,7 +12,7 @@ def AR1_process(
     N: int,
     seed: Optional[int] = None,
     dt: float = 1.0,
-    return_xarray: bool = True
+    name: Optional[str] = None,
 ):
     """
     Simulate a first-order autoregressive AR(1) process.
@@ -44,13 +39,12 @@ def AR1_process(
         current random state.
     dt : float, optional, default=1.0
         Time step between consecutive samples.
-    return_xarray : bool, optional, default=True
-        If True, return xarray.DataArray. If False, return TimeSeries object.
-
+    name : str, optional
+        Name for the returned xarray.DataArray. Defaults to ``"timeseries"``.
     Returns
     -------
-    xarray.DataArray or TimeSeries
-        Simulated AR(1) time series. Default is xarray.DataArray with time coordinate.
+    xarray.DataArray
+        Simulated AR(1) time series with time coordinate.
         
     Raises
     ------
@@ -74,7 +68,7 @@ def AR1_process(
     Generate a stationary AR(1) process with strong persistence:
     
     >>> ts = AR1_process(rho=0.9, sigma=1.0, y0=0.0, N=100, seed=42)
-    >>> print(f"Generated {ts.n} points with dt={ts.dt}")
+    >>> print(f"Generated {ts.sizes['time']} points with dt={ts.attrs['dt']}")
     Generated 100 points with dt=1.0
     """
     # Input validation
@@ -87,27 +81,28 @@ def AR1_process(
     if dt <= 0:
         raise ValueError(f"Time step dt must be positive, got {dt}")
     
-    # Set random seed if provided
-    if seed is not None:
-        np.random.seed(seed)
+    rng = np.random.default_rng(seed)
     
     # Initialize time series
     data = np.zeros(N)
     data[0] = y0
     
-    # Generate AR(1) process iteratively
     for t in range(1, N):
-        noise = np.random.normal(0, sigma)
-        data[t] = rho * data[t-1] + noise
-    
-    # Create time array
+        data[t] = rho * data[t - 1] + rng.normal(0.0, sigma)
+
     time = np.arange(N) * dt
 
-    # Create TimeSeries object for internal representation
-    ts = TimeSeries(time, data, dt)
-
-    # Return format based on user preference
-    if return_xarray:
-        return ts.to_xarray()
-    else:
-        return ts
+    return xr.DataArray(
+        data,
+        coords={"time": time},
+        dims=["time"],
+        name=name or "timeseries",
+        attrs={
+            "description": "Time series data",
+            "dt": dt,
+            "length": N,
+            "process": "AR1",
+            "rho": rho,
+            "sigma": sigma,
+        },
+    )

@@ -1,32 +1,30 @@
-"""
-Test basic AR1 process simulation functionality.
-"""
+"""Tests for phase scrambling helpers."""
 
 import numpy as np
-import pytest
-from SpectralCorr.ar_processes import AR1_process
+
+from SpectralCorr import AR1_process
+from SpectralCorr.ebisuzaki_surrogate_generation import phase_scrambled_surrogates
 
 
-def test_ar1_simulate_length_and_reproducibility():
-    """Test that AR1_process produces correct length and is reproducible."""
-    # Simulation parameters
-    N = 250
-    dt = 1.0
-    rho = 0.9
-    noise_std = 1.0
-    y0 = 1
+def test_phase_scrambled_surrogates_shape_and_dims():
+    ts = AR1_process(0.9, 1.0, 1.0, 128, seed=42)
+    surrogates = phase_scrambled_surrogates(ts, n_surrogates=5)
 
-    # Generate two time series with the same seed
-    ts1 = AR1_process(rho, noise_std, y0, N, seed=42, dt=dt, return_xarray=False)
-    ts2 = AR1_process(rho, noise_std, y0, N, seed=42, dt=dt, return_xarray=False)
+    assert surrogates.dims == ("surrogate", "time")
+    assert surrogates.shape == (5, 128)
+    assert surrogates.name == "phase_scrambled_surrogates"
 
-    # Test 1: Verify correct length
-    assert ts1.n == N
-    assert ts2.n == N
 
-    # Test 2: Verify time array starts at 0 and increments by dt
-    expected_time = np.arange(N) * dt
-    assert np.allclose(ts1.time, expected_time)
+def test_phase_scrambled_surrogates_single_output_squeezes_surrogate_dim():
+    ts = AR1_process(0.9, 1.0, 1.0, 64, seed=42)
+    surrogate = phase_scrambled_surrogates(ts, n_surrogates=1)
 
-    # Test 3: Verify reproducibility with same seed
-    assert np.array_equal(ts1.data, ts2.data)
+    assert surrogate.dims == ("time",)
+    assert surrogate.shape == (64,)
+
+
+def test_phase_scrambled_surrogates_preserve_time_coordinate():
+    ts = AR1_process(0.7, 1.0, 0.0, 50, seed=42, dt=0.25)
+    surrogates = phase_scrambled_surrogates(ts, n_surrogates=3)
+
+    np.testing.assert_allclose(surrogates.time.values, ts.time.values)

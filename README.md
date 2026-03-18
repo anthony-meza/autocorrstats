@@ -31,7 +31,7 @@ Here's a quick example to get you started:
 
 ```python
 import numpy as np
-from SpectralCorr import AR1_process, cross_correlation
+from SpectralCorr import AR1_process, cross_correlation, phase_scrambled_surrogates
 
 # Generate two AR(1) time series
 ts1 = AR1_process(rho=0.9, sigma=1.0, y0=0.0, N=500, seed=42)
@@ -41,14 +41,18 @@ ts2 = AR1_process(rho=0.8, sigma=1.0, y0=0.0, N=500, seed=123)
 result_pearson = cross_correlation(ts1, ts2, maxlags=50, method='pearson')
 
 # Or use the Ebisuzaki method for robust significance testing for autocorrelated timeseries 
-result_ebisuzaki = cross_correlation(ts1, ts2, maxlags=50, method='ebisuzaki', n_iter=1000)
+result_ebisuzaki = cross_correlation(ts1, ts2, maxlags=50, method='ebisuzaki', n_surrogates=1000)
 
 # Results are returned as xarray Datasets
 print(result_ebisuzaki.cross_correlation)
 print(result_ebisuzaki.cross_correlation_pvalue)
+
+# The surrogate generator is also available directly
+surrogates = phase_scrambled_surrogates(ts1, n_surrogates=100)
+print(surrogates)
 ```
 
-For more examples, see the Jupyter notebooks in the `notebook_examples/` directory.
+For an example notebook, see `notebook_examples/AR1_lagged_example.ipynb`.
 
 ## License
 
