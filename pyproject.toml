@@ -53,8 +53,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/anthony-meza/SpectralCorr"
-Repository = "https://github.com/anthony-meza/SpectralCorr"
+Homepage = "https://github.com/anthony-meza/autocorrstats"
+Repository = "https://github.com/anthony-meza/autocorrstats"
 
 [tool.setuptools.packages.find]
 include = ["autocorrstats*"]

@@ -22,7 +22,7 @@ This installs the package in editable mode together with the development and not
 If you only want to install the package itself:
 
 ```bash
-pip install git+https://github.com/anthony-meza/SpectralCorr.git@main
+pip install git+https://github.com/anthony-meza/autocorrstats.git@main
 ```
 
 ## License
