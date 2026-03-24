@@ -1,35 +1,39 @@
-name: ci
+name: CI
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
-  ci:
-    # Set up operating system
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-
-      - name: Check-out repository
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0            # get full history so gh-pages can detect changes
-          persist-credentials: true # allow pushes with GITHUB_TOKEN
-
-      - name: Install poetry
-        uses: snok/install-poetry@v1
+          python-version: ${{ matrix.python-version }}
+          cache: pip
 
       - name: Install dependencies
-        run: poetry install --no-interaction
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
 
-      - name: Test with pytest
-        run: poetry run pytest autocorrstats/tests/ --cov=autocorrstats --cov-report=xml
+      - name: Run tests
+        run: python -m pytest autocorrstats/tests --cov=autocorrstats --cov-report=xml
 
-      - name: Use Codecov to track coverage
+      - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
